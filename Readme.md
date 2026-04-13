@@ -1,51 +1,55 @@
-# Python SNI Spoof Tunnel Pro
+# Gost & SNI Tunnel Manager Pro v4.0
 
-A professional SNI spoofing tunnel designed to bypass network filtering by masking traffic with fake Server Name Indication (SNI) headers.
+A powerful, all-in-one tunnel management script for Iran and Kharej servers. This tool uses **Gost** for creating secure TLS tunnels with SNI spoofing to bypass network restrictions.
 
-## 🚀 Features
-- **Multi-SNI Support**: Choose from a curated list of high-reputation domains (Vercel, Next.js, Let's Encrypt, etc.).
-- **Latency Testing**: Automatically tests and suggests the best SNI for your current server environment.
-- **Dual Mode Operations**:
-  - **IRAN Mode (Sender)**: Spoofs outgoing packets with a fake SNI.
-  - **KHAREJ Mode (Receiver)**: Acts as a transparent bridge to accept any incoming spoofed traffic.
-- **Professional CLI**: Color-coded output, automatic environment checks, and integrated logging.
-- **Transparent Forwarding**: Supports non-TLS traffic (SSH, HTTP) without modification.
+## Features
+- **Interactive UI**: Navigate menus easily using arrow keys (↑/↓) and Enter (⏎).
+- **Pre-compiled Binary**: Includes Gost v2.12.0 for Linux AMD64 (Ubuntu 22.04+)—no building required!
+- **Unified Manager**: One script to rule them all (supports both Iran and Kharej modes).
+- **SNI Spoofing**: Built-in list of Iranian and popular domains (like `tgjo.org`, `tgju.org`, `snapp.ir`, etc.) to hide your traffic.
+- **Systemd Integration**: Easily install tunnels as background services that restart automatically.
+- **Automated SSL**: Generates self-signed certificates for the Kharej (TLS receiver) side.
 
-## 🛠️ Installation
-The management script will automatically check for and attempt to install Python 3 if it's missing.
+## Quick Start
 
+### 1. Prerequisites
+The script requires `openssl` for certificate generation and `sudo` for service management.
 ```bash
-git clone <repository-url>
-cd tunnel
-chmod +x run.sh
+sudo apt update && sudo apt install -y openssl
 ```
 
-## 📖 How to Use
-
-### 1. Kharej (Receiver) Server Setup
-First, run the script on your foreign server to prepare it for incoming traffic.
+### 2. Run the Manager
 ```bash
 ./run.sh
 ```
-- Select **Option 2 (KHAREJ Mode)**.
-- Set the local port (usually **443**).
-- Set the target IP/Port (where your proxy service like V2Ray or Shadowsocks is listening, e.g., `127.0.0.1:1080`).
 
-### 2. Iran (Sender) Server Setup
-Run the script on your Iran server to start forwarding traffic.
-```bash
-./run.sh
-```
-- Select **Option 1 (IRAN Mode)**.
-- Enter your **Kharej Server IP**.
-- The script will test latencies for several SNIs and suggest the **"Best"** one.
-- Select the suggested SNI or enter a custom one.
+### 3. Usage Steps
 
-## 📊 Verification & Logs
-You can monitor the tunnel's performance directly through the CLI:
-- Select **Option 3 (View Logs)** in the main menu to see the last 20 lines of traffic logs.
-- Full logs are stored in `logs/tunnel.log`.
+#### **On Kharej Server (External)**
+1. Run `./run.sh`.
+2. Select **"Setup Kharej Server (TLS Receiver)"**.
+   - This will listen on port `443`.
+   - It will ask to generate certificates in `/root` (say `y`).
+   - You can choose to install it as a service.
 
-## ⚠️ Important Notes
-- **SSL Certificates**: Clients (browsers) will show a certificate mismatch error because the server provides the real certificate for the original domain while the SNI is spoofed. This is expected.
-- **Root Privileges**: To bind to ports below 1024 (like 443), you may need to run the script with `sudo`.
+#### **On Iran Server (Internal)**
+1. Run `./run.sh`.
+2. Select **"Setup Iran Server (Tunnel to Kharej)"**.
+   - Enter your **Kharej Server IP**.
+   - Select a decoy SNI (e.g., `tgjo.org`).
+   - The tunnel will listen on port `10000`.
+   - You can choose to install it as a service.
+
+## Menu Options
+- **Setup Iran Server**: Configures the client-side tunnel with SNI spoofing.
+- **Setup Kharej Server**: Configures the server-side TLS listener.
+- **Install Gost to System**: Copies the included binary to `/usr/local/bin/gost`.
+- **Manage Service**: Check status, view logs, or stop/restart the background service.
+- **Uninstall Everything**: Cleanly removes the systemd service and logs.
+
+## Security
+- The Kharej server uses TLS encryption with cert/key pairs.
+- The Iran server uses SNI (Server Name Indication) spoofing to make the connection look like a request to a legitimate Iranian website.
+
+## Credits
+- Binary: [Gost](https://github.com/ginuerzh/gost) v2.12.0 by ginuerzh.

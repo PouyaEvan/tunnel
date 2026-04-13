@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# SNI Spoofing Tunnel Manager Smart Pro v2.6
+# Gost & SNI Tunnel Manager Pro v4.0
 # ==============================================================================
 
 # Colors
@@ -15,253 +15,258 @@ NC='\033[0m'
 
 # Config
 LOG_DIR="logs"
-TUNNEL_SCRIPT="$(pwd)/sni_tunnel/tunnel.py"
-SERVICE_NAME="sni-tunnel"
-SNI_LIST=("varzesh3.com" "ikco.ir" "vercel.com" "nextjs.com" "letsencrypt.org" "google.com" "cloudflare.com" "github.com")
+SERVICE_NAME="gost-tunnel"
+LOCAL_GOST="./bin/gost"
+SYSTEM_GOST="/usr/local/bin/gost"
+SNI_LIST=("tgju.org" "tgjo.org" "snapp.ir" "divar.ir" "ikco.ir" "varzesh3.com" "bazaar.ir")
+CERT_DIR="/root"
+
+# Helpers
+mkdir -p "$LOG_DIR"
 
 log() {
     local level=$1
     local msg=$2
-    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    echo -e "${timestamp} [${level}] ${msg}" | tee -a "${LOG_DIR}/tunnel.log"
+    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [${level}] ${msg}" >> "${LOG_DIR}/manager.log"
 }
 
-check_service_status() {
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo -e "${GREEN}RUNNING${NC}"
-    elif systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
-        echo -e "${YELLOW}STOPPED (Enabled)${NC}"
+# ------------------------------------------------------------------------------
+# Menu Logic (Arrow Keys)
+# ------------------------------------------------------------------------------
+select_option() {
+    local -a options=("$@")
+    local cur=0
+    local key=""
+
+    # Hide cursor
+    tput civis
+
+    while true; do
+        clear
+        echo -e "${CYAN}================================================${NC}"
+        echo -e "${GREEN}      Gost & SNI Tunnel Manager Pro v4.0      ${NC}"
+        echo -e "${CYAN}================================================${NC}"
+        echo -e "${YELLOW} Use Arrow Keys (↑/↓) to navigate and Enter (⏎) to select:${NC}\n"
+
+        for i in "${!options[@]}"; do
+            if [ $cur -eq $i ]; then
+                echo -e "${CYAN}  ➔  ${MAGENTA}[ ${options[$i]} ]${NC}"
+            else
+                echo -e "      ${options[$i]}"
+            fi
+        done
+        echo -e "\n${CYAN}================================================${NC}"
+
+        # Read keys
+        read -rsn3 key
+        case "$key" in
+            $'\x1b[A') # Up
+                ((cur--))
+                [ $cur -lt 0 ] && cur=$(( ${#options[@]} - 1 ))
+                ;;
+            $'\x1b[B') # Down
+                ((cur++))
+                [ $cur -ge ${#options[@]} ] && cur=0
+                ;;
+            "") # Enter
+                tput cnorm # Show cursor
+                return $cur
+                ;;
+        esac
+    done
+}
+
+# ------------------------------------------------------------------------------
+# Gost Logic
+# ------------------------------------------------------------------------------
+check_gost() {
+    if [ -f "$LOCAL_GOST" ]; then
+        GOST_BIN="$LOCAL_GOST"
+        return 0
+    elif command -v gost &> /dev/null; then
+        GOST_BIN=$(command -v gost)
+        return 0
     else
-        echo -e "${RED}NOT INSTALLED${NC}"
+        echo -e "${RED}[ERROR] Gost binary not found!${NC}"
+        echo -e "Please ensure 'bin/gost' exists in the project folder."
+        read -p "Press Enter to return..."
+        return 1
     fi
 }
 
-get_installed_mode() {
-    if [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
-        if grep -q "IRAN" "/etc/systemd/system/${SERVICE_NAME}.service"; then
-            echo -e "${CYAN}IRAN Mode${NC}"
-        elif grep -q "KHAREJ" "/etc/systemd/system/${SERVICE_NAME}.service"; then
-            echo -e "${CYAN}KHAREJ Mode${NC}"
-        else echo -e "Unknown"; fi
-    else echo -e "None"; fi
+install_gost_system() {
+    if [ -f "$LOCAL_GOST" ]; then
+        echo -e "${BLUE}>>> Installing pre-compiled Gost binary to $SYSTEM_GOST...${NC}"
+        sudo cp "$LOCAL_GOST" "$SYSTEM_GOST"
+        sudo chmod +x "$SYSTEM_GOST"
+        echo -e "${GREEN}[SUCCESS] Gost installed to system path.${NC}"
+    else
+        echo -e "${RED}[ERROR] Local bin/gost not found.${NC}"
+    fi
+    read -p "Press Enter to return..."
 }
 
-check_latency() {
-    local host=$1
-    local start=$(date +%s%N)
-    if curl -s -o /dev/null -m 2 "$host"; then
-        local end=$(date +%s%N)
-        local diff=$(( (end - start) / 1000000 ))
-        echo "$diff"
-    else echo "999"; fi
+generate_certs() {
+    if [ ! -f "$CERT_DIR/cert.pem" ] || [ ! -f "$CERT_DIR/key.pem" ]; then
+        echo -e "${YELLOW}>>> Certificates not found in $CERT_DIR.${NC}"
+        echo -e "Gost TLS requires cert.pem and key.pem."
+        read -p "Do you want to generate self-signed certificates now? (y/n): " gen
+        if [[ "$gen" == "y" ]]; then
+            sudo openssl req -x509 -newkey rsa:4096 -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" -days 3650 -nodes -subj "/C=IR/ST=Tehran/L=Tehran/O=IT/OU=IT/CN=tgju.org"
+            sudo chmod 644 "$CERT_DIR/cert.pem"
+            sudo chmod 600 "$CERT_DIR/key.pem"
+            echo -e "${GREEN}>>> Certificates generated successfully.${NC}"
+        else
+            echo -e "${RED}>>> Warning: Gost may fail to start without certificates.${NC}"
+        fi
+    else
+        echo -e "${GREEN}>>> Certificates found in $CERT_DIR.${NC}"
+    fi
 }
 
-generate_portable() {
-    echo -e "${BLUE}Generating Portable One-Click Installer...${NC}"
-    local DEPLOY_FILE="deploy_tunnel.sh"
-    local PY_B64=$(base64 -w 0 "$TUNNEL_SCRIPT")
+install_service() {
+    local mode=$1
+    local cmd=$2
     
-    cat > "$DEPLOY_FILE" <<EOF
-#!/bin/bash
-# Standalone SNI Tunnel Installer
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
-echo -e "\${YELLOW}>>> Extracting Tunnel Logic...\${NC}"
-mkdir -p sni_tunnel logs
-echo "$PY_B64" | base64 -d > sni_tunnel/tunnel.py
-if ! command -v python3 &> /dev/null; then
-    echo -e "\${YELLOW}>>> Installing Python 3...\${NC}"
-    sudo apt update && sudo apt install -y python3
-fi
-echo -e "\${GREEN}>>> Extraction Complete.\${NC}"
-echo -e "You can now run 'bash run.sh' or use this script to reinstall."
-# Re-generate a basic run.sh for them
-EOF
-    # Append the current run.sh logic to the deploy file so it's fully functional
-    cat "$0" >> "$DEPLOY_FILE"
-    chmod +x "$DEPLOY_FILE"
-    echo -e "${GREEN}[SUCCESS] Portable installer created: $DEPLOY_FILE${NC}"
-    echo -e "Upload this single file via SFTP to your Iran server and run it."
-    read -p "Press enter to return..."
-}
+    # Ensure we use absolute path for the binary in systemd
+    local absolute_gost
+    if [[ "$GOST_BIN" == "./bin/gost" ]]; then
+        absolute_gost="$(pwd)/bin/gost"
+    else
+        absolute_gost="$GOST_BIN"
+    fi
+    
+    # Replace the binary path in the command with the absolute path
+    local final_cmd="${cmd/\"$GOST_BIN\"/\"$absolute_gost\"}"
+    final_cmd="${final_cmd/$GOST_BIN/$absolute_gost}"
 
-test_connection() {
-    echo -e "\n${BLUE}--- Connection Test Tool ---${NC}"
-    read -p "Enter Target IP: " TEST_IP
-    read -p "Enter Target Port: " TEST_PORT
-    echo -e "${CYAN}Testing TCP connection to \$TEST_IP:\$TEST_PORT...${NC}"
-    if timeout 3 bash -c "cat < /dev/null > /dev/tcp/\$TEST_IP/\$TEST_PORT" 2>/dev/null; then
-        echo -e "${GREEN}[SUCCESS] Target is reachable.${NC}"
-    else echo -e "${RED}[FAILED] Target is unreachable or port is closed.${NC}"; fi
-    read -p "Press enter to return..."
-}
-
-show_sni_menu() {
-    echo -e "\n${BLUE}--- Choose Best SNI ---${NC}"
-    echo -e "${CYAN}Testing latencies...${NC}"
-    local best_ms=999; local best_sni=""; local results=()
-    for sni in "\${SNI_LIST[@]}"; do
-        local ms=\$(check_latency "\$sni")
-        results+=("\$sni|\$ms")
-        if (( ms < best_ms )); then best_ms=\$ms; best_sni=\$sni; fi
-    done
-    for res in "\${results[@]}"; do
-        local s=\${res%|*}; local m=\${res#*|}
-        [[ "\$s" == "\$best_sni" ]] && echo -e " - \$s: \${GREEN}\${m}ms\${NC} (Best)" || echo -e " - \$s: \${YELLOW}\${m}ms\${NC}"
-    done
-    echo -e "\n0) Custom SNI\nR) Auto-Rotation (Uses all SNIs)"
-    for i in "\${!SNI_LIST[@]}"; do echo -e "\$((i+1))) \${SNI_LIST[\$i]}"; done
-    read -p "Select SNI: " SNI_CHOICE
-    ROTATION_INTERVAL=0
-    if [[ "\$SNI_CHOICE" == "R" || "\$SNI_CHOICE" == "r" ]]; then
-        FINAL_SNI=\$(IFS=,; echo "\${SNI_LIST[*]}")
-        read -p "Enter Rotation Interval [300]: " ROTATION_INTERVAL
-        ROTATION_INTERVAL=\${ROTATION_INTERVAL:-300}
-    elif [[ "\$SNI_CHOICE" == "0" ]]; then read -p "Enter Custom SNI: " FINAL_SNI
-    elif [[ "\$SNI_CHOICE" -ge 1 && "\$SNI_CHOICE" -le "\${#SNI_LIST[@]}" ]]; then
-        FINAL_SNI="\${SNI_LIST[\$((SNI_CHOICE-1))]}"
-    else FINAL_SNI="\$best_sni"; fi
-}
-
-ask_auth() {
-    read -p "Enable PSK Authentication? (y/n): " ENABLE_AUTH
-    if [[ "\$ENABLE_AUTH" == "y" ]]; then
-        read -p "Enter PSK [random]: " PSK
-        [[ -z "\$PSK" ]] && PSK=\$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-        echo -e "\${YELLOW}PSK: \${GREEN}\$PSK\${NC}"
-    else PSK=""; fi
-}
-
-ask_udp() {
-    echo -e "\n\${BLUE}--- UDP Support Options ---\${NC}"
-    echo -e "1) None\n2) Native UDP\n3) UDP-over-TCP"
-    read -p "Select UDP Mode [1-3]: " UDP_CHOICE
-    case \$UDP_CHOICE in 2) UDP_MODE="native" ;; 3) UDP_MODE="tcp" ;; *) UDP_MODE="none" ;; esac
-}
-
-ask_obfs() {
-    read -p "Enable Traffic Obfuscation? (y/n): " ENABLE_OBFS
-    if [[ "\$ENABLE_OBFS" == "y" ]]; then
-        read -p "Enter Obfs Key [random]: " OBFS_KEY
-        [[ -z "\$OBFS_KEY" ]] && OBFS_KEY=\$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-        echo -e "\${YELLOW}Obfs Key: \${GREEN}\$OBFS_KEY\${NC}"
-    else OBFS_KEY=""; fi
-}
-
-install_systemd() {
-    local mode=\$1; local ports=\$2; local rhost=\$3; local sni=\$4; local extra_args=\$5
-    echo -e "\${BLUE}Installing Systemd Service...\${NC}"
-    local CMD="python3 \$TUNNEL_SCRIPT --rhost \$rhost --ports \$ports --sni \$sni --show-stats \$extra_args"
-    [[ -n "\$ROTATION_INTERVAL" && "\$ROTATION_INTERVAL" -gt 0 ]] && CMD="\$CMD --rotate \$ROTATION_INTERVAL"
-    [[ -n "\$PSK" ]] && CMD="\$CMD --psk \$PSK"
-    [[ -n "\$OBFS_KEY" ]] && CMD="\$CMD --obfs-key \$OBFS_KEY"
-    [[ "\$UDP_MODE" != "none" ]] && CMD="\$CMD --udp-mode \$UDP_MODE"
-    sudo bash -c "cat > /etc/systemd/system/\${SERVICE_NAME}.service <<EOF
+    echo -e "${BLUE}>>> Installing Systemd Service: $SERVICE_NAME ($mode)${NC}"
+    
+    sudo bash -c "cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
-Description=SNI Tunnel (\$mode)
+Description=Gost Tunnel Service ($mode)
 After=network.target
+
 [Service]
 Type=simple
-User=\$(whoami)
-WorkingDirectory=\$(pwd)
-ExecStart=\$CMD
+ExecStart=$final_cmd
 Restart=always
-RestartSec=5
-StandardOutput=append:\$(pwd)/logs/tunnel.log
-StandardError=append:\$(pwd)/logs/tunnel.log
+RestartSec=3
+LimitNOFILE=65535
+WorkingDirectory=$(pwd)
+
 [Install]
 WantedBy=multi-user.target
 EOF"
-    sudo systemctl daemon-reload; sudo systemctl enable \${SERVICE_NAME}; sudo systemctl restart \${SERVICE_NAME}
-    echo -e "\${GREEN}Service installed and started!\${NC}"
-    read -p "Press enter to return..."
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$SERVICE_NAME"
+    sudo systemctl restart "$SERVICE_NAME"
+    
+    echo -e "${GREEN}>>> Service started successfully!${NC}"
+    sudo systemctl status "$SERVICE_NAME" --no-pager
+    read -p "Press Enter to return..."
 }
 
-run_iran() {
-    echo -e "\n\${BLUE}--- Iran Server Configuration ---\${NC}"
+setup_kharej() {
+    if ! check_gost; then return; fi
+    echo -e "\n${BLUE}--- Kharej Server Setup ---${NC}"
+    echo -e "This server will listen on port 443 with TLS and wait for Iran server connections."
+    
+    generate_certs
+    
+    local CMD="$GOST_BIN -L \"tcp://:443?tls=true&cert=$CERT_DIR/cert.pem&key=$CERT_DIR/key.pem\""
+    
+    echo -e "\n${CYAN}Proposed Command:${NC}"
+    echo -e "$CMD"
+    
+    read -p "Install as Service? (y/n): " is_svc
+    if [[ "$is_svc" == "y" ]]; then
+        install_service "KHAREJ" "$CMD"
+    else
+        echo -e "${YELLOW}>>> Starting Gost manually. Press Ctrl+C to stop.${NC}"
+        eval $CMD
+    fi
+}
+
+setup_iran() {
+    if ! check_gost; then return; fi
+    echo -e "\n${BLUE}--- Iran Server Setup ---${NC}"
+    echo -e "This server will tunnel local traffic to the Kharej server using a fake SNI (Server Name)."
+    
     read -p "Enter Kharej Server IP: " KHAREJ_IP
-    read -p "Enter Ports [443]: " PORTS; PORTS=\${PORTS:-443}
-    show_sni_menu; ask_auth; ask_udp; ask_obfs
-    read -p "Install as Systemd Service? (y/n): " IS_SYSTEMD
-    if [[ "\$IS_SYSTEMD" == "y" ]]; then install_systemd "IRAN" "\$PORTS" "\$KHAREJ_IP" "\$FINAL_SNI" ""
+    if [[ -z "$KHAREJ_IP" ]]; then
+        echo -e "${RED}Error: IP is required.${NC}"
+        sleep 2; return
+    fi
+    
+    echo -e "\n${CYAN}Select Decoy SNI (tgju.org is recommended):${NC}"
+    for i in "${!SNI_LIST[@]}"; do echo -e "$((i+1))) ${SNI_LIST[$i]}"; done
+    echo -e "$(( ${#SNI_LIST[@]} + 1 ))) Custom SNI"
+    read -p "Selection [1]: " sni_opt; sni_opt=${sni_opt:-1}
+    
+    local FINAL_SNI
+    if [[ "$sni_opt" -le "${#SNI_LIST[@]}" ]]; then
+        FINAL_SNI="${SNI_LIST[$((sni_opt-1))]}"
     else
-        CMD="python3 \$TUNNEL_SCRIPT --rhost \$KHAREJ_IP --ports \$PORTS --sni \$FINAL_SNI --rotate \$ROTATION_INTERVAL --udp-mode \$UDP_MODE --show-stats"
-        [[ -n "\$PSK" ]] && CMD="\$CMD --psk \$PSK"
-        [[ -n "\$OBFS_KEY" ]] && CMD="\$CMD --obfs-key \$OBFS_KEY"
-        \$CMD 2>&1 | tee -a "\${LOG_DIR}/tunnel.log"; fi
-}
+        read -p "Enter Custom SNI: " FINAL_SNI
+    fi
 
-run_kharej() {
-    echo -e "\n\${BLUE}--- Kharej Server Configuration ---\${NC}"
-    read -p "Enter Ports [443]: " PORTS; PORTS=\${PORTS:-443}
-    read -p "Enter Target IP [127.0.0.1]: " TIP; TIP=\${TIP:-127.0.0.1}
-    read -p "Enter Target Port [1080]: " TPORT; TPORT=\${TPORT:-1080}
-    ask_auth; ask_udp; ask_obfs
-    local port_map=""; IFS=',' read -ra ADDR <<< "\$PORTS"
-    for i in "\${ADDR[@]}"; do port_map+="\${i}:\${TPORT},"; done; port_map=\${port_map%,}
-    read -p "Install as Systemd Service? (y/n): " IS_SYSTEMD
-    if [[ "\$IS_SYSTEMD" == "y" ]]; then install_systemd "KHAREJ" "\$port_map" "\$TIP" "none" "--no-spoof"
+    local CMD="$GOST_BIN -L \"tcp://:10000\" -F \"tcp://$KHAREJ_IP:443?tls=true&servername=$FINAL_SNI\""
+    
+    echo -e "\n${CYAN}Proposed Command:${NC}"
+    echo -e "$CMD"
+    
+    read -p "Install as Service? (y/n): " is_svc
+    if [[ "$is_svc" == "y" ]]; then
+        install_service "IRAN" "$CMD"
     else
-        CMD="python3 \$TUNNEL_SCRIPT --rhost \$TIP --ports \$port_map --no-spoof --udp-mode \$UDP_MODE --show-stats"
-        [[ -n "\$PSK" ]] && CMD="\$CMD --psk \$PSK"
-        [[ -n "\$OBFS_KEY" ]] && CMD="\$CMD --obfs-key \$OBFS_KEY"
-        \$CMD 2>&1 | tee -a "\${LOG_DIR}/tunnel.log"; fi
-}
-
-uninstall_service() {
-    echo -e "\${RED}Uninstalling Service...\${NC}"
-    sudo systemctl stop "\$SERVICE_NAME" 2>/dev/null; sudo systemctl disable "\$SERVICE_NAME" 2>/dev/null
-    sudo rm "/etc/systemd/system/\${SERVICE_NAME}.service" 2>/dev/null; sudo systemctl daemon-reload
-    echo -e "\${GREEN}Service uninstalled successfully.\${NC}"
-    read -p "Press enter to return..."
-}
-
-setup_env() {
-    mkdir -p "\$LOG_DIR"
-    if ! command -v python3 &> /dev/null; then
-        sudo apt update && sudo apt install -y python3
+        echo -e "${YELLOW}>>> Starting Gost manually. Press Ctrl+C to stop.${NC}"
+        eval $CMD
     fi
 }
 
-setup_env
+uninstall() {
+    echo -e "${RED}>>> Uninstalling Service and Logs...${NC}"
+    sudo systemctl stop "$SERVICE_NAME" &>/dev/null
+    sudo systemctl disable "$SERVICE_NAME" &>/dev/null
+    sudo rm "/etc/systemd/system/${SERVICE_NAME}.service" &>/dev/null
+    sudo systemctl daemon-reload
+    echo -e "${GREEN}>>> Service uninstalled successfully.${NC}"
+    read -p "Press Enter to return..."
+}
+
+# ------------------------------------------------------------------------------
+# Main Loop
+# ------------------------------------------------------------------------------
 while true; do
-    STATUS=\$(check_service_status); MODE=\$(get_installed_mode)
-    clear
-    echo -e "\${CYAN}================================================\${NC}"
-    echo -e "\${GREEN}      SNI Spoofing Tunnel Smart Manager v2.6    \${NC}"
-    echo -e "\${CYAN}================================================\${NC}"
-    echo -e " Status: \$STATUS"
-    echo -e " Mode:   \$MODE"
-    echo -e "\${CYAN}------------------------------------------------\${NC}"
-    if [[ "\$MODE" == "None" ]]; then
-        echo -e "1) \${YELLOW}Install IRAN Mode\${NC}"
-        echo -e "2) \${YELLOW}Install KHAREJ Mode\${NC}"
-    else
-        echo -e "1) \${MAGENTA}Reinstall/Change to IRAN\${NC}"
-        echo -e "2) \${MAGENTA}Reinstall/Change to KHAREJ\${NC}"
-        echo -e "U) \${RED}Uninstall Current Service\${NC}"
-    fi
-    echo -e "T) \${CYAN}Test Remote Connection\${NC}"
-    echo -e "M) \${CYAN}Manage Service (Stats/Logs/Restart)\${NC}"
-    echo -e "P) \${BLUE}Generate Portable Installer (SFTP Ready)\${NC}"
-    echo -e "X) \${RED}Exit\${NC}"
-    echo -e "\${CYAN}================================================\${NC}"
-    read -p "Select Choice: " CHOICE
-    case \$CHOICE in
-        1) run_iran ;;
-        2) run_kharej ;;
-        u|U) uninstall_service ;;
-        t|T) test_connection ;;
-        p|P) generate_portable ;;
-        m|M) 
-            echo -e "\n1) Status 2) Restart 3) Stop 4) Live Stats"
-            read -p "Option: " S_OPT
-            case \$S_OPT in
-                1) sudo systemctl status "\$SERVICE_NAME" ;;
-                2) sudo systemctl restart "\$SERVICE_NAME" ;;
-                3) sudo systemctl stop "\$SERVICE_NAME" ;;
-                4) tail -f "\${LOG_DIR}/tunnel.log" | grep "STATS" ;;
-            esac ;;
-        x|X) exit 0 ;;
-        *) echo -e "\${RED}Invalid.\${NC}"; sleep 1 ;;
+    options=(
+        "Setup Iran Server (Tunnel to Kharej)"
+        "Setup Kharej Server (TLS Receiver)"
+        "Install Gost to System (/usr/local/bin)"
+        "Manage Service (Status/Logs/Stop)"
+        "Uninstall Everything"
+        "Exit"
+    )
+    
+    select_option "${options[@]}"
+    choice=$?
+    
+    case $choice in
+        0) setup_iran ;;
+        1) setup_kharej ;;
+        2) install_gost_system ;;
+        3) 
+            echo -e "\n1) Status  2) Logs  3) Stop  4) Restart"
+            read -p "Option: " m_opt
+            case $m_opt in
+                1) sudo systemctl status "$SERVICE_NAME" --no-pager ;;
+                2) journalctl -u "$SERVICE_NAME" -f ;;
+                3) sudo systemctl stop "$SERVICE_NAME" && echo "Stopped." ;;
+                4) sudo systemctl restart "$SERVICE_NAME" && echo "Restarted." ;;
+            esac
+            read -p "Press Enter..." ;;
+        4) uninstall ;;
+        5) exit 0 ;;
     esac
 done
