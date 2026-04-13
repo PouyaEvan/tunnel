@@ -1,57 +1,51 @@
-# Python SNI Spoof Tunnel
+# Python SNI Spoof Tunnel Pro
 
-A simple tunnel to understand the concept of **SNI Spoofing**. This tool receives traffic from a local port (Iran server) and replaces the SNI field with a fake domain when forwarding to the destination (Kharej/Foreign server) to bypass filtering.
+A professional SNI spoofing tunnel designed to bypass network filtering by masking traffic with fake Server Name Indication (SNI) headers.
 
-## Features
-- Automatic detection of TLS Client Hello packets.
-- Real SNI replacement with a fake SNI (e.g., `google.com`).
-- Automatic correction of TLS record lengths and handshake fields.
-- Support for non-TLS traffic (like HTTP or SSH) via transparent forwarding.
+## 🚀 Features
+- **Multi-SNI Support**: Choose from a curated list of high-reputation domains (Vercel, Next.js, Let's Encrypt, etc.).
+- **Latency Testing**: Automatically tests and suggests the best SNI for your current server environment.
+- **Dual Mode Operations**:
+  - **IRAN Mode (Sender)**: Spoofs outgoing packets with a fake SNI.
+  - **KHAREJ Mode (Receiver)**: Acts as a transparent bridge to accept any incoming spoofed traffic.
+- **Professional CLI**: Color-coded output, automatic environment checks, and integrated logging.
+- **Transparent Forwarding**: Supports non-TLS traffic (SSH, HTTP) without modification.
 
-## How to Set Up and Test (Iran - Kharej Scenario)
+## 🛠️ Installation
+The management script will automatically check for and attempt to install Python 3 if it's missing.
 
-### 1. Configuration
-You can pass your parameters via the `run.sh` menu or by calling `sni_tunnel/tunnel.py` directly with arguments:
-- `REMOTE IP`: Your destination server address.
-- `FAKE SNI`: A domain that is not filtered in your network.
+```bash
+git clone <repository-url>
+cd tunnel
+chmod +x run.sh
+```
 
-### 2. Execution
-Run the unified management script:
+## 📖 How to Use
+
+### 1. Kharej (Receiver) Server Setup
+First, run the script on your foreign server to prepare it for incoming traffic.
 ```bash
 ./run.sh
 ```
-Follow the menu prompts to select your server mode (Iran or Kharej).
+- Select **Option 2 (KHAREJ Mode)**.
+- Set the local port (usually **443**).
+- Set the target IP/Port (where your proxy service like V2Ray or Shadowsocks is listening, e.g., `127.0.0.1:1080`).
 
-### 3. Verification
-
-To ensure that the SNI has actually been changed, use one of the following methods:
-
-#### Method A: Observe Bytes on Kharej Server (Recommended)
-On the foreign (Kharej) server, run the following command to monitor incoming packets on port 443:
+### 2. Iran (Sender) Server Setup
+Run the script on your Iran server to start forwarding traffic.
 ```bash
-sudo tcpdump -i any -X -s0 tcp port 443
+./run.sh
 ```
-Now, from your client (or from within the Iran server), send a request:
-```bash
-curl -v -k --resolve example.com:8080:127.0.0.1 https://example.com:8080
-```
-In the `tcpdump` output on the foreign server, look for the string `google.com`. If you see it, the tunnel has successfully replaced the SNI.
+- Select **Option 1 (IRAN Mode)**.
+- Enter your **Kharej Server IP**.
+- The script will test latencies for several SNIs and suggest the **"Best"** one.
+- Select the suggested SNI or enter a custom one.
 
-#### Method B: Use TShark for Scientific Verification
-If `tshark` is installed on the foreign server:
-```bash
-sudo tshark -i any -Y "ssl.handshake.extensions_server_name" -V tcp port 443
-```
-This command directly extracts and displays the SNI field of incoming packets.
+## 📊 Verification & Logs
+You can monitor the tunnel's performance directly through the CLI:
+- Select **Option 3 (View Logs)** in the main menu to see the last 20 lines of traffic logs.
+- Full logs are stored in `logs/tunnel.log`.
 
-### 4. Testing Non-TLS Traffic
-You can also test the tunnel for regular traffic:
-```bash
-# Regular HTTP test (if the foreign server responds on port 80)
-curl -H "Host: example.com" http://localhost:8080
-```
-In this case, the tunnel console will display the message `Non-TLS traffic detected` and pass the traffic through without modification.
-
-## Important Notes
-- **SSL Error:** Due to the SNI change, clients (like browsers) will show a `Certificate Mismatch` error because the server sends the certificate for the original domain while the client thinks it's connected to the fake domain. This is expected at this stage.
-- **Bind Address:** For real use, ensure `LOCAL_ADDR` is set to `0.0.0.0` so the tunnel is accessible from the internet.
+## ⚠️ Important Notes
+- **SSL Certificates**: Clients (browsers) will show a certificate mismatch error because the server provides the real certificate for the original domain while the SNI is spoofed. This is expected.
+- **Root Privileges**: To bind to ports below 1024 (like 443), you may need to run the script with `sudo`.
