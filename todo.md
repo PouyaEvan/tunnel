@@ -16,7 +16,7 @@
 - [x] **Real-time Monitoring**: Integrated TUI for live traffic stats and connection testing.
 
 ## ⚙️ DevOps & Deployment
-- [ ] **One-Click Installer**: A single bash command to install all dependencies and start the tunnel.
+- [x] **One-Click Installer**: Portable standalone script generator for SFTP-ready deployment.
 
 ---
 **Note for Developer**: Always ask the user if they want to enable optional features (Auth, UDP, Obfuscation, etc.) during configuration. These must not be required by default.
