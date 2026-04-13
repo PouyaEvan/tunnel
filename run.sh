@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# SNI Spoofing Tunnel Manager Pro v2.3
+# SNI Spoofing Tunnel Manager Smart Pro v2.5
 # ==============================================================================
 
 # Colors
@@ -10,18 +10,44 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 NC='\033[0m'
 
 # Config
 LOG_DIR="logs"
 TUNNEL_SCRIPT="$(pwd)/sni_tunnel/tunnel.py"
-SNI_LIST=("vercel.com" "nextjs.com" "letsencrypt.org" "google.com" "cloudflare.com" "github.com")
+SERVICE_NAME="sni-tunnel"
+SNI_LIST=("varzesh3.com" "ikco.ir" "vercel.com" "nextjs.com" "letsencrypt.org" "google.com" "cloudflare.com" "github.com")
 
 log() {
     local level=$1
     local msg=$2
     local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
     echo -e "${timestamp} [${level}] ${msg}" | tee -a "${LOG_DIR}/tunnel.log"
+}
+
+check_service_status() {
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo -e "${GREEN}RUNNING${NC}"
+    elif systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+        echo -e "${YELLOW}STOPPED (Enabled)${NC}"
+    else
+        echo -e "${RED}NOT INSTALLED${NC}"
+    fi
+}
+
+get_installed_mode() {
+    if [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
+        if grep -q "IRAN" "/etc/systemd/system/${SERVICE_NAME}.service"; then
+            echo -e "${CYAN}IRAN Mode${NC}"
+        elif grep -q "KHAREJ" "/etc/systemd/system/${SERVICE_NAME}.service"; then
+            echo -e "${CYAN}KHAREJ Mode${NC}"
+        else
+            echo -e "Unknown"
+        fi
+    else
+        echo -e "None"
+    fi
 }
 
 check_latency() {
@@ -34,6 +60,20 @@ check_latency() {
     else
         echo "999"
     fi
+}
+
+test_connection() {
+    echo -e "\n${BLUE}--- Connection Test Tool ---${NC}"
+    read -p "Enter Target IP: " TEST_IP
+    read -p "Enter Target Port: " TEST_PORT
+    
+    echo -e "${CYAN}Testing TCP connection to $TEST_IP:$TEST_PORT...${NC}"
+    if timeout 3 bash -c "cat < /dev/null > /dev/tcp/$TEST_IP/$TEST_PORT" 2>/dev/null; then
+        echo -e "${GREEN}[SUCCESS] Target is reachable.${NC}"
+    else
+        echo -e "${RED}[FAILED] Target is unreachable or port is closed.${NC}"
+    fi
+    read -p "Press enter to return..."
 }
 
 show_sni_menu() {
@@ -87,9 +127,9 @@ ask_auth() {
 
 ask_udp() {
     echo -e "\n${BLUE}--- UDP Support Options ---${NC}"
-    echo -e "1) ${YELLOW}None${NC} (TCP only)"
-    echo -e "2) ${YELLOW}Native UDP${NC} (Faster, direct, but NO SNI spoofing for UDP)"
-    echo -e "3) ${YELLOW}UDP-over-TCP${NC} (Slower, encapsulated, but BENEFITS from SNI spoofing)"
+    echo -e "1) None"
+    echo -e "2) Native UDP"
+    echo -e "3) UDP-over-TCP"
     read -p "Select UDP Mode [1-3]: " UDP_CHOICE
     case $UDP_CHOICE in
         2) UDP_MODE="native" ;;
@@ -99,15 +139,11 @@ ask_udp() {
 }
 
 ask_obfs() {
-    echo -e "\n${BLUE}--- Traffic Obfuscation ---${NC}"
-    echo -e "${CYAN}Obfuscation hides traffic patterns and entropy from DPI filters.${NC}"
-    read -p "Enable Obfuscation? (y/n): " ENABLE_OBFS
+    read -p "Enable Traffic Obfuscation? (y/n): " ENABLE_OBFS
     if [[ "$ENABLE_OBFS" == "y" ]]; then
         read -p "Enter Obfuscation Key [random]: " OBFS_KEY
-        if [[ -z "$OBFS_KEY" ]]; then
-            OBFS_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-            echo -e "${YELLOW}Generated random Obfs Key: ${GREEN}$OBFS_KEY${NC}"
-        fi
+        [[ -z "$OBFS_KEY" ]] && OBFS_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+        echo -e "${YELLOW}Obfs Key: ${GREEN}$OBFS_KEY${NC}"
     else
         OBFS_KEY=""
     fi
@@ -121,9 +157,7 @@ install_systemd() {
     local extra_args=$5
 
     echo -e "${BLUE}Installing Systemd Service...${NC}"
-    local SERVICE_NAME="sni-tunnel"
-    local DESCRIPTION="SNI Spoofing Tunnel ($mode)"
-    local CMD="python3 $TUNNEL_SCRIPT --rhost $rhost --ports $ports --sni $sni $extra_args"
+    local CMD="python3 $TUNNEL_SCRIPT --rhost $rhost --ports $ports --sni $sni --show-stats $extra_args"
     
     [[ -n "$ROTATION_INTERVAL" && "$ROTATION_INTERVAL" -gt 0 ]] && CMD="$CMD --rotate $ROTATION_INTERVAL"
     [[ -n "$PSK" ]] && CMD="$CMD --psk $PSK"
@@ -132,7 +166,7 @@ install_systemd() {
 
     sudo bash -c "cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
-Description=$DESCRIPTION
+Description=SNI Tunnel ($mode)
 After=network.target
 
 [Service]
@@ -142,6 +176,8 @@ WorkingDirectory=$(pwd)
 ExecStart=$CMD
 Restart=always
 RestartSec=5
+StandardOutput=append:$(pwd)/logs/tunnel.log
+StandardError=append:$(pwd)/logs/tunnel.log
 
 [Install]
 WantedBy=multi-user.target
@@ -167,8 +203,7 @@ run_iran() {
     if [[ "$IS_SYSTEMD" == "y" ]]; then
         install_systemd "IRAN" "$PORTS" "$KHAREJ_IP" "$FINAL_SNI" ""
     else
-        log "INFO" "Starting IRAN Mode"
-        CMD="python3 $TUNNEL_SCRIPT --rhost $KHAREJ_IP --ports $PORTS --sni $FINAL_SNI --rotate $ROTATION_INTERVAL --udp-mode $UDP_MODE"
+        CMD="python3 $TUNNEL_SCRIPT --rhost $KHAREJ_IP --ports $PORTS --sni $FINAL_SNI --rotate $ROTATION_INTERVAL --udp-mode $UDP_MODE --show-stats"
         [[ -n "$PSK" ]] && CMD="$CMD --psk $PSK"
         [[ -n "$OBFS_KEY" ]] && CMD="$CMD --obfs-key $OBFS_KEY"
         $CMD 2>&1 | tee -a "${LOG_DIR}/tunnel.log"
@@ -176,10 +211,10 @@ run_iran() {
 }
 
 run_kharej() {
-    echo -e "\n${BLUE}--- Kharej Server Configuration (Receiver) ---${NC}"
-    read -p "Enter Ports (comma separated) [443]: " PORTS; PORTS=${PORTS:-443}
-    read -p "Enter Local Target IP [127.0.0.1]: " TIP; TIP=${TIP:-127.0.0.1}
-    read -p "Enter Local Target Port [1080]: " TPORT; TPORT=${TPORT:-1080}
+    echo -e "\n${BLUE}--- Kharej Server Configuration ---${NC}"
+    read -p "Enter Ports [443]: " PORTS; PORTS=${PORTS:-443}
+    read -p "Enter Target IP [127.0.0.1]: " TIP; TIP=${TIP:-127.0.0.1}
+    read -p "Enter Target Port [1080]: " TPORT; TPORT=${TPORT:-1080}
     ask_auth
     ask_udp
     ask_obfs
@@ -193,12 +228,21 @@ run_kharej() {
     if [[ "$IS_SYSTEMD" == "y" ]]; then
         install_systemd "KHAREJ" "$port_map" "$TIP" "none" "--no-spoof"
     else
-        log "INFO" "Starting KHAREJ Mode"
-        CMD="python3 $TUNNEL_SCRIPT --rhost $TIP --ports $port_map --no-spoof --udp-mode $UDP_MODE"
+        CMD="python3 $TUNNEL_SCRIPT --rhost $TIP --ports $port_map --no-spoof --udp-mode $UDP_MODE --show-stats"
         [[ -n "$PSK" ]] && CMD="$CMD --psk $PSK"
         [[ -n "$OBFS_KEY" ]] && CMD="$CMD --obfs-key $OBFS_KEY"
         $CMD 2>&1 | tee -a "${LOG_DIR}/tunnel.log"
     fi
+}
+
+uninstall_service() {
+    echo -e "${RED}Uninstalling Service...${NC}"
+    sudo systemctl stop "$SERVICE_NAME" 2>/dev/null
+    sudo systemctl disable "$SERVICE_NAME" 2>/dev/null
+    sudo rm "/etc/systemd/system/${SERVICE_NAME}.service" 2>/dev/null
+    sudo systemctl daemon-reload
+    echo -e "${GREEN}Service uninstalled successfully.${NC}"
+    read -p "Press enter to return..."
 }
 
 setup_env() {
@@ -208,30 +252,50 @@ setup_env() {
     fi
 }
 
+setup_env
 while true; do
-    echo -e "\n${CYAN}================================================${NC}"
-    echo -e "${GREEN}       SNI Spoofing Tunnel Management Pro v2.3  ${NC}"
+    STATUS=$(check_service_status)
+    MODE=$(get_installed_mode)
+    
+    clear
     echo -e "${CYAN}================================================${NC}"
-    echo -e "1) ${YELLOW}IRAN Mode${NC}      (Sender/Spoofer)"
-    echo -e "2) ${YELLOW}KHAREJ Mode${NC}    (Receiver/Transparent)"
-    echo -e "3) ${YELLOW}Manage Service${NC} (Systemd Status/Logs)"
-    echo -e "4) ${RED}Exit${NC}"
+    echo -e "${GREEN}      SNI Spoofing Tunnel Smart Manager v2.5    ${NC}"
+    echo -e "${CYAN}================================================${NC}"
+    echo -e " Status: $STATUS"
+    echo -e " Mode:   $MODE"
     echo -e "${CYAN}------------------------------------------------${NC}"
-    read -p "Select [1-4]: " CHOICE
+    
+    if [[ "$MODE" == "None" ]]; then
+        echo -e "1) ${YELLOW}Install IRAN Mode${NC}   (Sender)"
+        echo -e "2) ${YELLOW}Install KHAREJ Mode${NC} (Receiver)"
+    else
+        echo -e "1) ${MAGENTA}Reinstall/Change to IRAN${NC}"
+        echo -e "2) ${MAGENTA}Reinstall/Change to KHAREJ${NC}"
+        echo -e "U) ${RED}Uninstall Current Service${NC}"
+    fi
+    
+    echo -e "T) ${CYAN}Test Remote Connection${NC}"
+    echo -e "M) ${CYAN}Manage Service (Stats/Logs/Restart)${NC}"
+    echo -e "X) ${RED}Exit${NC}"
+    echo -e "${CYAN}================================================${NC}"
+    read -p "Select Choice: " CHOICE
+    
     case $CHOICE in
         1) run_iran ;;
         2) run_kharej ;;
-        3) 
-            echo -e "\n1) Status  2) Restart  3) Stop  4) Logs"
+        u|U) uninstall_service ;;
+        t|T) test_connection ;;
+        m|M) 
+            echo -e "\n1) Status  2) Restart  3) Stop  4) Live Stats"
             read -p "Option: " S_OPT
             case $S_OPT in
-                1) sudo systemctl status sni-tunnel ;;
-                2) sudo systemctl restart sni-tunnel ;;
-                3) sudo systemctl stop sni-tunnel ;;
-                4) sudo journalctl -u sni-tunnel -f ;;
+                1) sudo systemctl status "$SERVICE_NAME" ;;
+                2) sudo systemctl restart "$SERVICE_NAME" ;;
+                3) sudo systemctl stop "$SERVICE_NAME" ;;
+                4) tail -f "${LOG_DIR}/tunnel.log" | grep "STATS" ;;
             esac
             ;;
-        4) exit 0 ;;
+        x|X) exit 0 ;;
         *) echo -e "${RED}Invalid.${NC}"; sleep 1 ;;
     esac
 done

@@ -13,9 +13,7 @@
 - [x] **Traffic Obfuscation**: Rolling XOR stream cipher for DPI evasion.
 
 ## 📊 Monitoring & UI
-- [ ] **Real-time Monitoring**: Integrate a lightweight TUI for live traffic stats and latency graphs.
-- [ ] **Web Dashboard**: Optional web-based management interface.
-- [ ] **External Alerts**: Support for Telegram/Discord webhooks.
+- [x] **Real-time Monitoring**: Integrated TUI for live traffic stats and connection testing.
 
 ## ⚙️ DevOps & Deployment
 - [ ] **One-Click Installer**: A single bash command to install all dependencies and start the tunnel.
